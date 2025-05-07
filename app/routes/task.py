@@ -7,19 +7,80 @@ from ..models.task import Task
 from ..models.user import User
 from ..schemas.task import TaskCreate, TaskUpdate, TaskOut
 from datetime import datetime
+from fastapi.responses import JSONResponse
 
-router = APIRouter()
+router = APIRouter(tags=["Tasks"], prefix="/tasks")
 
-@router.post("/tasks", response_model=TaskOut)
-async def create_task(task: TaskCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@router.post(
+    "",
+    response_model=TaskOut,
+    summary="Создать новую задачу",
+    description="Создаёт новую задачу для текущего аутентифицированного пользователя. Требуется передать данные задачи в формате JSON.",
+    responses={
+        200: {
+            "description": "Задача успешно создана",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": 1,
+                        "title": "Новая задача",
+                        "description": "Описание задачи",
+                        "status": "open",
+                        "priority": 1,
+                        "owner_id": 1,
+                        "created_at": "2025-05-07T12:00:00Z"
+                    }
+                }
+            }
+        },
+        401: {"description": "Пользователь не аутентифицирован"},
+        422: {"description": "Некорректные входные данные"}
+    }
+)
+async def create_task(
+    task: TaskCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     db_task = Task(**task.dict(), owner_id=current_user.id)
     db.add(db_task)
     await db.commit()
     await db.refresh(db_task)
     return db_task
 
-@router.put("/tasks/{task_id}", response_model=TaskOut)
-async def update_task(task_id: int, task: TaskUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@router.put(
+    "/{task_id}",
+    response_model=TaskOut,
+    summary="Обновить задачу",
+    description="Обновляет существующую задачу по её ID. Можно обновить только те поля, которые переданы в запросе. Задача должна принадлежать текущему пользователю.",
+    responses={
+        200: {
+            "description": "Задача успешно обновлена",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": 1,
+                        "title": "Обновлённая задача",
+                        "description": "Новое описание",
+                        "status": "in_progress",
+                        "priority": 2,
+                        "owner_id": 1,
+                        "created_at": "2025-05-07T12:00:00Z"
+                    }
+                }
+            }
+        },
+        401: {"description": "Пользователь не аутентифицирован"},
+        404: {"description": "Задача не найдена"},
+        422: {"description": "Некорректные входные данные"}
+    }
+)
+async def update_task(
+    task_id: int,
+    task: TaskUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     query = select(Task).filter(Task.id == task_id, Task.owner_id == current_user.id)
     result = await db.execute(query)
     db_task = result.scalars().first()
@@ -31,7 +92,42 @@ async def update_task(task_id: int, task: TaskUpdate, current_user: User = Depen
     await db.refresh(db_task)
     return db_task
 
-@router.get("/tasks", response_model=List[TaskOut])
+@router.get(
+    "",
+    response_model=List[TaskOut],
+    summary="Получить список задач",
+    description="Возвращает список задач текущего пользователя с возможностью фильтрации по статусу, приоритету или дате создания.",
+    responses={
+        200: {
+            "description": "Список задач успешно возвращён",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "title": "Задача 1",
+                            "description": "Описание 1",
+                            "status": "open",
+                            "priority": 1,
+                            "owner_id": 1,
+                            "created_at": "2025-05-07T12:00:00Z"
+                        },
+                        {
+                            "id": 2,
+                            "title": "Задача 2",
+                            "description": "Описание 2",
+                            "status": "closed",
+                            "priority": 2,
+                            "owner_id": 1,
+                            "created_at": "2025-05-07T13:00:00Z"
+                        }
+                    ]
+                }
+            }
+        },
+        401: {"description": "Пользователь не аутентифицирован"}
+    }
+)
 async def get_tasks(
     status: Optional[str] = None,
     priority: Optional[int] = None,
@@ -49,8 +145,39 @@ async def get_tasks(
     result = await db.execute(query)
     return result.scalars().all()
 
-@router.get("/tasks/search", response_model=List[TaskOut])
-async def search_tasks(q: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@router.get(
+    "/search",
+    response_model=List[TaskOut],
+    summary="Поиск задач",
+    description="Ищет задачи текущего пользователя по ключевому слову в заголовке или описании задачи.",
+    responses={
+        200: {
+            "description": "Результаты поиска успешно возвращены",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "title": "Задача 1",
+                            "description": "Описание с ключевым словом",
+                            "status": "open",
+                            "priority": 1,
+                            "owner_id": 1,
+                            "created_at": "2025-05-07T12:00:00Z"
+                        }
+                    ]
+                }
+            }
+        },
+        401: {"description": "Пользователь не аутентифицирован"},
+        422: {"description": "Параметр поиска отсутствует или некорректен"}
+    }
+)
+async def search_tasks(
+    q: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     query = select(Task).filter(Task.owner_id == current_user.id).filter(
         (Task.title.contains(q)) | (Task.description.contains(q))
     )
